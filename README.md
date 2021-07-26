@@ -1,6 +1,6 @@
 ## pong
 
-Reproduction of the Atari Inc. pong game, circa 1972.
+Reproduction of the Atari Inc. pong game from the 1970s.
 
 Based on code from the Go tutorial at https://sdl2.veandco/tutorials/go.
 Rewritten in C and using SDL2 rendering (as opposed to the older SDL1 surface blitting).

@@ -9,10 +9,10 @@ assets/sounds/ping_pong_8bit_plop.ogg
 
 all: pong epong
 
-pong:
-	$(CC) -o $@ pong.c $(LIBS)
+pong: pong.c
+	$(CC) -o $@ $^ $(LIBS)
 
-epong: embed_assets.c
+epong: pong.c embed_assets.c
 	$(CC) -DEMBED -o $@ pong.c $(LIBS)
 
 embed_assets.c: 
