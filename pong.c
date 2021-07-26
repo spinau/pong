@@ -355,6 +355,7 @@ draw_scoreboard()
         s = TTF_RenderUTF8_Solid(rally_font, str, rally_color);
         t = SDL_CreateTextureFromSurface(renderer, s);
         SDL_RenderCopy(renderer, t, NULL, &r);
+        SDL_DestroyTexture(t);
         SDL_FreeSurface(s);
     }
 
@@ -365,6 +366,7 @@ draw_scoreboard()
     s = TTF_RenderUTF8_Solid(score_font, str, score_color);
     t = SDL_CreateTextureFromSurface(renderer, s);
     SDL_RenderCopy(renderer, t, NULL, &r);
+    SDL_DestroyTexture(t);
     SDL_FreeSurface(s);
 
     sprintf(str, "%d", game.score[1]);
@@ -374,6 +376,7 @@ draw_scoreboard()
     s = TTF_RenderUTF8_Solid(score_font, str, score_color);
     t = SDL_CreateTextureFromSurface(renderer, s);
     SDL_RenderCopy(renderer, t, NULL, &r);
+    SDL_DestroyTexture(t);
     SDL_FreeSurface(s);
 }
 
@@ -543,7 +546,7 @@ run_game(SDL_Window *w)
         if (delay_ms > 0)
             SDL_Delay(delay_ms);
         else if (delay_ms < 0) 
-            printf("missed frame delay_ms %d (%dFPS = %dms)\n", delay_ms, fps, 1000/fps);
+            printf("missed frame delay_ms %d (%dFPS = %.1fms)\n", delay_ms, fps, (float)1000/fps);
 
         prev_time = start_time;
     }
