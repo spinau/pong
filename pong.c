@@ -76,11 +76,9 @@ struct Paddle {
 } paddle1, paddle2;
 float paddle_speed = 1.1;
 
-struct Game {
-    bool running;
-    int score[2];
-} game;
-
+// game state:
+bool running;
+int score[2];
 int rally = 0, rally_duration, rally_max;
 long rally_start;
 long pause_time = 0;
@@ -313,7 +311,7 @@ check_ballwall_collision()
     static bool scooting = false; // when ball scoots along side
 
     if (ball.rect.x < 0 || ball.rect.x+ball.rect.w > 1.0) { // hit an end
-        ++game.score[ball.rect.x < 0.5? 1 : 0];
+        ++score[ball.rect.x < 0.5? 1 : 0];
         play(score_sound, BOTHSPKR);
         new_ball();
     } else if (ball.rect.y < 0 || ball.rect.y+ball.rect.h > 1.0) { // hit a side
@@ -336,8 +334,7 @@ check_paddlewall_collision(struct Paddle *paddle)
         paddle->rect.y = 0;
 }
 
-// to cache rendered fonts rather than continually rerender them
-// look here: https://github.com/grimfang4/SDL_FontCache
+// TODO cache rendered fonts rather than continually rerendering see https://github.com/grimfang4/SDL_FontCache
 void 
 draw_scoreboard()
 {
@@ -359,7 +356,7 @@ draw_scoreboard()
         SDL_FreeSurface(s);
     }
 
-    sprintf(str, "%d", game.score[0]);
+    sprintf(str, "%d", score[0]);
     TTF_SizeUTF8(score_font, str, &r.w, &r.h);
     r.x = paddle1.rect.x * win_width + win_width/10; // place relative to paddle
     r.y = win_height/10; 
@@ -369,7 +366,7 @@ draw_scoreboard()
     SDL_DestroyTexture(t);
     SDL_FreeSurface(s);
 
-    sprintf(str, "%d", game.score[1]);
+    sprintf(str, "%d", score[1]);
     TTF_SizeUTF8(score_font, str, &r.w, &r.h);
     r.x = paddle2.rect.x * win_width - r.w - win_width/10; // place relative to paddle
     r.y = win_height/10;
@@ -404,7 +401,7 @@ handle_input(SDL_Window *w)
 #endif
         switch (event.type) {
         case SDL_QUIT:
-            game.running = false;
+            running = false;
             break;
         case SDL_KEYDOWN:
             switch (event.key.keysym.sym) {
@@ -481,11 +478,11 @@ void
 new_game()
 {
     srand((unsigned) SDL_GetPerformanceCounter()); // current time in nanoseconds
-    game.score[0] = game.score[1] = 0;
+    score[0] = score[1] = 0;
     new_paddle(&paddle1, 0.1);
     new_paddle(&paddle2, 0.9-0.01);
     new_ball();
-    game.running = true;
+    running = true;
 }
 
 void game_update(float deltaTime)
@@ -505,7 +502,7 @@ run_game(SDL_Window *w)
     int start_time, prev_time = 0; // GetTicks will wrap if run > 49 days
 
 
-    while (game.running) {
+    while (running) {
         pause_time = 0;
         start_time = SDL_GetTicks();
 
@@ -530,7 +527,7 @@ run_game(SDL_Window *w)
         prev_time = start_time;
     }
 
-    printf("Final score %d/%d\n", game.score[0], game.score[1]);
+    printf("Final score %d/%d\n", score[0], score[1]);
     if (rally_duration > rally_max)
         rally_max = rally_duration;
     if (rally_max > 0)
