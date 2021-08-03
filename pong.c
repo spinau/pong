@@ -187,7 +187,7 @@ new_ball()
     ball.rect.x = 0.5;
     ball.rect.y = 0.5;
     ball.rect.w = 0.01;
-    ball.rect.h = aspect * 0.01;
+    ball.rect.h = 0.01;
     randomize_ball_velocity(randf() <= 0.5? BALLLEFT : BALLRIGHT);
     
     // new ball, rally stops
@@ -211,14 +211,14 @@ draw_ball()
     rect.x = ball.rect.x * win_width;
     rect.y = ball.rect.y * win_height;
     rect.w = ball.rect.w * win_width;
-    rect.h = ball.rect.h * win_height;
+    rect.h = ball.rect.h * win_height * aspect;
     SDL_RenderFillRect(renderer, &rect);
 
     // glow outline
     rect.x = (ball.rect.x - 0.005) * win_width;
     rect.y = (ball.rect.y - 0.005) * win_height;
     rect.w = (ball.rect.w + 0.01) * win_width;
-    rect.h = (ball.rect.h + 0.01) * win_height;
+    rect.h = (ball.rect.h * aspect + 0.01) * win_height;
     SDL_RenderCopy(renderer, ball_glow_texture, NULL, &rect);
 }
 
@@ -394,10 +394,11 @@ void
 handle_input(SDL_Window *w)
 {
     SDL_Event event;
+    bool pausing = false;
 
-    while (SDL_PollEvent(&event)) {
+    while (SDL_PollEvent(&event) || pausing) {
 //#define SHOWEVENT
-#ifdef SHOWEVENT // ld evinfo.o
+#ifdef SHOWEVENT // ld evname.o
         extern char *evname(SDL_Event *);
         puts(evname(&event));
 #endif
@@ -423,11 +424,13 @@ handle_input(SDL_Window *w)
                 mute = !mute;
                 break;
             case SDLK_SPACE:
-                pause_time = SDL_GetTicks();
-                do
-                    SDL_WaitEvent(&event);
-                while (!(event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_SPACE));
-                pause_time = SDL_GetTicks() - pause_time;
+                if (pausing) {
+                    pause_time = SDL_GetTicks() - pause_time;
+                    pausing = false;
+                } else {
+                    pause_time = SDL_GetTicks();
+                    pausing = true;
+                }
                 break;
             case SDLK_f:
                 if (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN)
@@ -461,8 +464,6 @@ handle_input(SDL_Window *w)
                 win_width = event.window.data1;
                 win_height = event.window.data2;
                 aspect = (float)win_width/(float)win_height;
-                //surface = SDL_GetWindowSurface(w); // old surface invalidated
-                //SDL_FillRect(surface, NULL, bg_color);
                 break;
             case SDL_WINDOWEVENT_EXPOSED:
                 break;
@@ -472,31 +473,9 @@ handle_input(SDL_Window *w)
                 break;
             }
             break;
-        default:
-            break;
         }
     }
 }
-
-#if 0
-// draw outline where x,y is lower-left corner
-draw_outline(SDL_Window *w, int x, int y)
-{
-    static SDL_Renderer *r = NULL;
-
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN) {
-        return; // no resizing in full screen
-
-    if (r == NULL)  // init
-        if ((r = SDL_CreateRenderer(w, -1, 0)) == NULL)
-            puts(SDL_GetError()), return;
-
-    SDL_SetRenderDrawColor(r, 255, 50, 50, SDL_ALPHA_OPAQUE);
-    SDL_RenderDrawLines(r, points, 4);
-    SDL_RenderPresent(r);
-        
-}
-#endif
 
 void 
 new_game()
@@ -619,13 +598,14 @@ start()
 
     // game window
     SDL_Window *window;
-    if (SDL_CreateWindowAndRenderer(
+    if ((window = SDL_CreateWindow(win_title, 
+                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                 win_width, win_height,
-                SDL_WINDOW_SHOWN,
-                &window, &renderer) < 0)
+                SDL_WINDOW_RESIZABLE)) == NULL)
         return ERROR;
 
-    SDL_SetWindowTitle(window, win_title);
+    if ((renderer = SDL_CreateRenderer(window, -1, 0)) == NULL)
+        return ERROR;
   
     // images to textures
     SDL_Surface *paddle, *ball;
