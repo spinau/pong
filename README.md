@@ -1,39 +1,58 @@
-## pong
+# pong
 
-Reproduction of the Atari Inc. pong game from the 1970s.
+Reproduction of the Atari, Inc. *Pong* game from the 1970s, written in C with SDL2 rendering (as opposed to the older SDL1 surface blitting).
 
-Based on code from the Go tutorial at https://sdl2.veandco/tutorials/go.
-Rewritten in C and using SDL2 rendering (as opposed to the older SDL1 surface blitting).
+Based on code from the [Go SDL2 tutorial](https://sdl2.veandco/tutorials/go).
 
-Not tested on anything other than GNU Linux. Make will make two versions: **pong** requires the assets/ directory,
-**epong** has the assets embedded.
+> Only tested on GNU/Linux.
 
-###### Usage: 
+## Build
 
-pong [ *options* ] [ *width height* ]
+```sh
+make
+```
 
-###### Options:
+This builds two binaries:
 
-**-b***float* &emsp; ball speed (0.3 is ok, 1.0 is very fast)\
-**-p***float* &emsp; paddle speed (1.0 or thereabouts is ok)\
-**-f***int*   &emsp; frames per second (vsync is default)\
-**-F**      &emsp; start in full screen
+| Binary  | Description                                  |
+|---------|-----------------------------------------------|
+| `pong`  | Requires the `assets/` directory at runtime.  |
+| `epong` | Assets embedded in the binary; no `assets/` needed. |
 
-###### Keyboard when running:
+### Requirements
 
-**f**       &emsp; toggle fullscreen/window\
-**space**   &emsp; pause/unpause\
-**m**       &emsp; mute/unmute\
-**g**       &emsp; show/hide fps\
-**s**/**w**     &emsp; player 1 paddle\
-**↑**/**↓**     &emsp; player 2 paddle\
-**esc**     &emsp; quit
+- [SDL2](https://www.libsdl.org/download-2.0.php)
+- [SDL2_ttf](https://www.libsdl.org/projects/SDL_ttf)
+- [SDL2_mixer](https://www.libsdl.org/projects/SDL_mixer)
+- [SDL2_image](https://www.libsdl.org/projects/SDL_image)
 
-###### Requires
+## Usage
 
-https://www.libsdl.org/download-2.0.php  
-https://www.libsdl.org/projects/SDL_ttf  
-https://www.libsdl.org/projects/SDL_mixer  
-https://www.libsdl.org/projects/SDL_image
+```sh
+pong [options] [width height]
+```
 
+### Options
 
+| Flag      | Argument | Description                                      | Default        |
+|-----------|----------|---------------------------------------------------|----------------|
+| `-b`      | *float*  | Ball speed                                        | `0.3`          |
+| `-p`      | *float*  | Paddle speed                                      | `1.1`          |
+| `-f`      | *int*    | Frames per second (disables vsync)                | vsync          |
+| `-F`      |          | Start in full screen                              | windowed       |
+| `-m`      | *file*   | MP3 or OGG file to play as background music       | `assets/sounds/bg_music.mp3` |
+| `-v`      | *int*    | Background music volume (`0`-`128`)               | `48`           |
+| `-h`      |          | Show usage and exit                               |                |
+
+### Keyboard controls
+
+| Key        | Action                       |
+|------------|-------------------------------|
+| `W` / `S`  | Player 1 paddle (up/down)     |
+| `↑` / `↓`  | Player 2 paddle (up/down)     |
+| `Space`    | Pause / unpause               |
+| `F`        | Toggle fullscreen / windowed  |
+| `M`        | Mute / unmute                 |
+| `P`        | Pause / resume background music |
+| `G`        | Show / hide FPS                |
+| `Esc`      | Quit                          |
