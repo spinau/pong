@@ -1,9 +1,9 @@
 // Atari Inc. pong circa 1972
-// an exercise using SDL2 based on Go code and assets from https://sdl2.veandco/tutorials/go/
-// with changes:
-// keep ball square, rally count and ball speed-up, random slam speed, 
-// stereo, mute, pause, embed assets option, options, use renderer, code refactoring, etc.
-// 12/7/21-SP
+// this implementation based on 2021 Go/SDL2 tutorial by veandco
+
+// features: square ball constraint, rally acceleration, random slam speed,
+// stereo panning, muting, pausing, asset embedding, and renderer optimizations,
+// press 'g' during play for fps count
 
 // usage: pong [options] [width height]
 
@@ -39,9 +39,11 @@
 const char *win_title = "Pong circa 1972";
 int win_width = WINWIDTH;
 int win_height = WINHEIGHT;
-float aspect = (float)(WINWIDTH)/(float)(WINHEIGHT); // used to keep ball square
-int fps = 80;
+float aspect = (float)WINWIDTH / (float)WINHEIGHT; // used to keep ball square
+int target_fps = 80;
+bool vsync = true; // -f opts out of vsync in favor of a manual fps cap
 bool mute = false;
+bool start_fullscreen = false;
 
 // assets
 #ifdef EMBED
@@ -57,48 +59,46 @@ const char *ball_glow_imgpath    = "assets/images/ball-glow-yellow.png";
 const int fontsize = 64;
 
 // SDL items
-SDL_Color rally_color = {0, 128, 0}; // rendered color for font
-SDL_Color score_color = {255, 255, 255};
-Mix_Chunk *ballpaddle_sound, *ballwall_sound, *score_sound;
-TTF_Font *rally_font, *score_font;
-SDL_Renderer *renderer;
-SDL_Texture *paddle_glow_texture, *ball_glow_texture;
+SDL_Color rally_color = {0, 128, 0, 255}; // rendered color for font
+SDL_Color score_color = {255, 255, 255, 255};
+Mix_Chunk *ballpaddle_sound = NULL, *ballwall_sound = NULL, *score_sound = NULL;
+TTF_Font *rally_font = NULL, *score_font = NULL;
+SDL_Renderer *renderer = NULL;
+SDL_Texture *paddle_glow_texture = NULL, *ball_glow_texture = NULL;
+
+// Textures for cached UI rendering
+SDL_Texture *score1_texture = NULL, *score2_texture = NULL, *rally_texture = NULL;
+int score1_w = 0, score1_h = 0, score2_w = 0, score2_h = 0, rally_w = 0, rally_h = 0;
+int cached_score1 = -1, cached_score2 = -1, cached_rally_sec = -1;
+
+// fps HUD (toggled with 'g')
+bool show_fps = false;
+double fps_smoothed = 0.0;
+SDL_Texture *fps_texture = NULL;
+int fps_w = 0, fps_h = 0, cached_fps_display = -1;
 
 struct Ball {
     SDL_FRect rect;
     SDL_FPoint velocity;
 } ball;
-float ball_speed, ball_speed_start = 0.3; // 1.0 fastest reasonable speed
+float ball_speed, ball_speed_start = 0.3f; // 1.0 fastest reasonable speed
 
 struct Paddle {
     SDL_FRect rect;
     SDL_FPoint velocity;
 } paddle1, paddle2;
-float paddle_speed = 1.1;
+float paddle_speed = 1.1f;
 
-// game state:
 bool running;
+bool paused = false;
 int score[2];
-int rally = 0, rally_duration, rally_max;
-long rally_start;
-long pause_time = 0;
-
- ///////////////////////
-// utility functions //
-//////////////////////
+int rally = 0, rally_duration = 0, rally_max = 0;
+Uint64 rally_start_ticks = 0;
+Uint64 pause_start_ticks = 0;
 
 // returns pseudo-random number in [0.0, 1.0)
-float
-randf()
-{
-    return rand() / (RAND_MAX + 1.0);
-}
-
-// returns pseudo-random number in [0, n)
-int
-randn(int n)
-{
-    return (int) (randf() * (float)n);
+float randf(void) {
+    return (float)rand() / ((float)RAND_MAX + 1.0f);
 }
 
 #define LEFTSPKR 1
@@ -106,65 +106,14 @@ randn(int n)
 #define BOTHSPKR 3
 
 void
-play(Mix_Chunk *sound, int side)
-{
-    if (mute)
-        return;
-    if (side == LEFTSPKR)
-        Mix_SetPanning(0, 255, 0);
-    else if (side == RIGHTSPKR)
-        Mix_SetPanning(0, 0, 255);
-    else
-        Mix_SetPanning(0, 255, 255);
+play(Mix_Chunk *sound, int side) {
+    if (mute || !sound) return;
+    if (side == LEFTSPKR)      Mix_SetPanning(0, 255, 0);
+    else if (side == RIGHTSPKR) Mix_SetPanning(0, 0, 255);
+    else                       Mix_SetPanning(0, 255, 255);
 
     Mix_PlayChannel(-1, sound, 0);
 }
-
-// floating-point rect type (FRect) not well supported in SDL2
-// following 2 fns should be in the SDL2 library, these are from gosdl:
-bool
-SDL_FRectEmpty(SDL_FRect *a)
-{
-    return a == NULL || a->w <= 0 || a->h <= 0;
-}
-
-bool
-SDL_IntersectRectF(SDL_FRect *a, SDL_FRect *b, SDL_FRect *res)
-{
-    if (a == NULL || b == NULL || res == NULL) 
-        return false;
-
-    if (SDL_FRectEmpty(a) || SDL_FRectEmpty(b)) {
-        res->w = res->h = 0;
-        return false;
-    }
-
-    float amin = a->x, amax = a->x + a->w;
-    float bmin = b->x, bmax = b->x + b->w;
-    if (bmin > amin)
-        amin = bmin;
-    res->x = amin;
-    if (bmax < amax)
-        amax = bmax;
-    res->w = amax - amin;
-
-    amin = a->y;
-    amax = amin + a->h;
-    bmin = b->y;
-    bmax = bmin + b->h;
-    if (bmin > amin)
-        amin = bmin;
-    res->y = amin;
-    if (bmax < amax)
-        amax = bmax;
-    res->h = amax - amin;
-
-    return !SDL_FRectEmpty(res);
-}
-
- //////////
-// ball //
-/////////
 
 #define BALLRIGHT 0
 #define BALLLEFT 1
@@ -172,26 +121,26 @@ SDL_IntersectRectF(SDL_FRect *a, SDL_FRect *b, SDL_FRect *res)
 void
 randomize_ball_velocity(int direction)
 {
-    float rnd_radian = (M_PI/2*randf() - M_PI/4) + M_PI * (float)direction;
-    float slam = randf() < 0.05? 1.4 : 1;
-    ball.velocity.x  = cosf(rnd_radian) * ball_speed * slam;
-    ball.velocity.y  = sinf(rnd_radian) * ball_speed * slam;
+    float rnd_radian = (M_PI_2 * randf() - M_PI_4) + M_PI * (float)direction;
+    float slam = (randf() < 0.05f) ? 1.4f : 1.0f;
+    ball.velocity.x = cosf(rnd_radian) * ball_speed * slam;
+    ball.velocity.y = sinf(rnd_radian) * ball_speed * slam;
 }
 
 void
 new_ball()
 {
     ball_speed = ball_speed_start;
-    ball.rect.x = 0.5;
-    ball.rect.y = 0.5;
-    ball.rect.w = 0.01;
-    ball.rect.h = 0.01;
-    randomize_ball_velocity(randf() <= 0.5? BALLLEFT : BALLRIGHT);
+    ball.rect.x = 0.5f;
+    ball.rect.y = 0.5f;
+    ball.rect.w = 0.01f;
+    ball.rect.h = 0.01f;
+    randomize_ball_velocity(randf() <= 0.5f ? BALLLEFT : BALLRIGHT);
     
     // new ball, rally stops
-    if (rally_duration > rally_max)
-        rally_max = rally_duration;
+    if (rally_duration > rally_max) rally_max = rally_duration;
     rally = 0;
+    cached_rally_sec = -1;
 }
 
 void
@@ -202,35 +151,34 @@ update_ball(float deltaTime)
 }
 
 void
-draw_ball()
+draw_ball(void)
 {
-    // convert floating-point rect to integer rect
-    SDL_Rect rect;
-    rect.x = ball.rect.x * win_width;
-    rect.y = ball.rect.y * win_height;
-    rect.w = ball.rect.w * win_width;
-    rect.h = ball.rect.h * win_height * aspect;
-    SDL_RenderFillRect(renderer, &rect);
+    // sub-pixel precision: render directly from the FRect, no int truncation
+    SDL_FRect rect = {
+        ball.rect.x * win_width,
+        ball.rect.y * win_height,
+        ball.rect.w * win_width,
+        ball.rect.h * win_height * aspect
+    };
+    SDL_RenderFillRectF(renderer, &rect);
 
     // glow outline
-    rect.x = (ball.rect.x - 0.005) * win_width;
-    rect.y = (ball.rect.y - 0.005) * win_height;
-    rect.w = (ball.rect.w + 0.01) * win_width;
-    rect.h = (ball.rect.h * aspect + 0.01) * win_height;
-    SDL_RenderCopy(renderer, ball_glow_texture, NULL, &rect);
+    if (ball_glow_texture) {
+        rect.x = (ball.rect.x - 0.005f) * win_width;
+        rect.y = (ball.rect.y - 0.005f) * win_height;
+        rect.w = (ball.rect.w + 0.01f) * win_width;
+        rect.h = (ball.rect.h * aspect + 0.01f) * win_height;
+        SDL_RenderCopyF(renderer, ball_glow_texture, NULL, &rect);
+    }
 }
-
- ////////////
-// paddle //
-///////////
 
 void
 new_paddle(struct Paddle *paddle, float xpos)
 {
     paddle->rect.x = xpos;
-    paddle->rect.y = 0.5 - (0.09 / 2); // vertical half-way
-    paddle->rect.w = 0.01;
-    paddle->rect.h = 0.09;
+    paddle->rect.y = 0.5f - (0.09f / 2.0f); // vertical half-way
+    paddle->rect.w = 0.01f;
+    paddle->rect.h = 0.09f;
 }
 
 void
@@ -242,37 +190,33 @@ update_paddle(struct Paddle *paddle, float deltaTime)
 void
 draw_paddle(struct Paddle *p)
 {
-    // convert floating-point rect to integer rect
-    SDL_Rect rect;
-    rect.x = p->rect.x * win_width; 
-    rect.y = p->rect.y * win_height;
-    rect.w = p->rect.w * win_width; 
-    rect.h = p->rect.h * win_height;
-    SDL_RenderFillRect(renderer, &rect);
+    // sub-pixel precision: render directly from the FRect, no int truncation
+    SDL_FRect rect = {
+        p->rect.x * win_width,
+        p->rect.y * win_height,
+        p->rect.w * win_width,
+        p->rect.h * win_height
+    };
+    SDL_RenderFillRectF(renderer, &rect);
 
-    // glow outline
-    rect.x = (p->rect.x - 0.005) * win_width;
-    rect.y = (p->rect.y - 0.005) * win_height;
-    rect.w = (p->rect.w + 0.01) * win_width;
-    rect.h = (p->rect.h + 0.01) * win_height;
-    if (SDL_RenderCopy(renderer, paddle_glow_texture, NULL, &rect) < 0)
-        puts(SDL_GetError());
+    if (paddle_glow_texture) {
+        rect.x = (p->rect.x - 0.005f) * win_width;
+        rect.y = (p->rect.y - 0.005f) * win_height;
+        rect.w = (p->rect.w + 0.01f) * win_width;
+        rect.h = (p->rect.h + 0.01f) * win_height;
+        SDL_RenderCopyF(renderer, paddle_glow_texture, NULL, &rect);
+    }
 }
-    
- //////////
-// game //
-/////////
 
-// called on ballpaddle collision
 void
 rally_timer()
 {
     if (rally == 0) {
-        rally_start = SDL_GetTicks();
+        rally_start_ticks = SDL_GetTicks64();
         rally = 1;
     } else {
         ++rally;
-        ball_speed += ball_speed_start * .08; // also speed up the game
+        ball_speed += ball_speed_start * 0.08f; // also speed up the game
     }
 }
 
@@ -282,27 +226,27 @@ check_ballpaddle_collision()
     static bool paddle1hit = false, paddle2hit = false;
     SDL_FRect res;
 
-    if (SDL_IntersectRectF(&ball.rect, &paddle1.rect, &res)) {
+    if (SDL_IntersectFRect(&ball.rect, &paddle1.rect, &res)) {
         if (!paddle1hit) {
             randomize_ball_velocity(BALLRIGHT);
             paddle1hit = true;
             rally_timer();
-            play(ballpaddle_sound, ball.rect.x < .5? LEFTSPKR : RIGHTSPKR);
+            play(ballpaddle_sound, ball.rect.x < 0.5f ? LEFTSPKR : RIGHTSPKR);
         }
-    } else
-        paddle1hit=false;
+    } else {
+        paddle1hit = false;
+    }
 
-
-    if (SDL_IntersectRectF(&ball.rect, &paddle2.rect, &res)) {
+    if (SDL_IntersectFRect(&ball.rect, &paddle2.rect, &res)) {
         if (!paddle2hit) {
             randomize_ball_velocity(BALLLEFT);
             paddle2hit = true;
             rally_timer();
-            play(ballpaddle_sound, ball.rect.x < .5? LEFTSPKR : RIGHTSPKR);
-        } 
-    } else
+            play(ballpaddle_sound, ball.rect.x < 0.5f ? LEFTSPKR : RIGHTSPKR);
+        }
+    } else {
         paddle2hit = false;
-
+    }
 }
 
 void
@@ -310,71 +254,113 @@ check_ballwall_collision()
 {
     static bool scooting = false; // when ball scoots along side
 
-    if (ball.rect.x < 0 || ball.rect.x+ball.rect.w > 1.0) { // hit an end
-        ++score[ball.rect.x < 0.5? 1 : 0];
+    if (ball.rect.x < 0.0f || ball.rect.x + ball.rect.w > 1.0f) { // hit an end
+        ++score[ball.rect.x < 0.5f ? 1 : 0];
         play(score_sound, BOTHSPKR);
         new_ball();
-    } else if (ball.rect.y < 0 || ball.rect.y+ball.rect.h > 1.0) { // hit a side
+    } else if (ball.rect.y < 0.0f || ball.rect.y + ball.rect.h > 1.0f) { // hit a side
         if (!scooting) {
             ball.velocity.y = -ball.velocity.y;
-            play(ballwall_sound, ball.rect.x < 0.5? LEFTSPKR : RIGHTSPKR);
+            play(ballwall_sound, ball.rect.x < 0.5f ? LEFTSPKR : RIGHTSPKR);
             scooting = true;
-            ball_speed += randf() < 0.5? 0.02 : -0.02;
+            ball_speed += (randf() < 0.5f) ? 0.02f : -0.02f;
         }
-    } else
+    } else {
         scooting = false;
+    }
 }
 
 void
 check_paddlewall_collision(struct Paddle *paddle)
 {
-    if (paddle->rect.y + paddle->rect.h > 1.0)
-        paddle->rect.y = 1 - paddle->rect.h;
-    else if (paddle->rect.y < 0)
-        paddle->rect.y = 0;
+    if (paddle->rect.y + paddle->rect.h > 1.0f)
+        paddle->rect.y = 1.0f - paddle->rect.h;
+    else if (paddle->rect.y < 0.0f)
+        paddle->rect.y = 0.0f;
 }
 
-// TODO cache rendered fonts rather than continually rerendering see https://github.com/grimfang4/SDL_FontCache
-void 
+void
+update_cached_text(SDL_Texture **texture, int *w, int *h, 
+        TTF_Font *font, const char *text, 
+        SDL_Color color)
+{
+    if (*texture)
+        SDL_DestroyTexture(*texture);
+    *texture = NULL;
+    SDL_Surface *s = TTF_RenderUTF8_Solid(font, text, color);
+    if (s) {
+        *w = s->w;
+        *h = s->h;
+        *texture = SDL_CreateTextureFromSurface(renderer, s);
+        SDL_FreeSurface(s);
+    }
+}
+
+void
 draw_scoreboard()
 {
     SDL_Rect r;
-    SDL_Surface *s;
-    SDL_Texture *t;
-    char str[18];
+    char str[32];
 
-    if (rally > 1) {
-        rally_duration = SDL_GetTicks() - rally_start;
-        sprintf(str, "%d/%d", rally_duration/1000, rally_max/1000);
-        TTF_SizeUTF8(rally_font, str, &r.w, &r.h);
-        r.x = win_width/2 - r.w/2; 
-        r.y = win_height/10 + r.h/2; 
-        s = TTF_RenderUTF8_Solid(rally_font, str, rally_color);
-        t = SDL_CreateTextureFromSurface(renderer, s);
-        SDL_RenderCopy(renderer, t, NULL, &r);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
+    if (rally > 1 && !paused) {
+        rally_duration = (int)(SDL_GetTicks64() - rally_start_ticks);
+        int current_sec = rally_duration / 1000;
+        if (current_sec != cached_rally_sec) {
+            cached_rally_sec = current_sec;
+            snprintf(str, sizeof(str), "%d/%d", current_sec, rally_max / 1000);
+            update_cached_text(&rally_texture, &rally_w, &rally_h, rally_font, str, rally_color);
+        }
+        if (rally_texture) {
+            r.w = rally_w; r.h = rally_h;
+            r.x = win_width / 2 - r.w / 2;
+            r.y = win_height / 10 + r.h / 2;
+            SDL_RenderCopy(renderer, rally_texture, NULL, &r);
+        }
     }
 
-    sprintf(str, "%d", score[0]);
-    TTF_SizeUTF8(score_font, str, &r.w, &r.h);
-    r.x = paddle1.rect.x * win_width + win_width/10; // place relative to paddle
-    r.y = win_height/10; 
-    s = TTF_RenderUTF8_Solid(score_font, str, score_color);
-    t = SDL_CreateTextureFromSurface(renderer, s);
-    SDL_RenderCopy(renderer, t, NULL, &r);
-    SDL_DestroyTexture(t);
-    SDL_FreeSurface(s);
+    if (score[0] != cached_score1) {
+        cached_score1 = score[0];
+        snprintf(str, sizeof(str), "%d", score[0]);
+        update_cached_text(&score1_texture, &score1_w, &score1_h, score_font, str, score_color);
+    }
 
-    sprintf(str, "%d", score[1]);
-    TTF_SizeUTF8(score_font, str, &r.w, &r.h);
-    r.x = paddle2.rect.x * win_width - r.w - win_width/10; // place relative to paddle
-    r.y = win_height/10;
-    s = TTF_RenderUTF8_Solid(score_font, str, score_color);
-    t = SDL_CreateTextureFromSurface(renderer, s);
-    SDL_RenderCopy(renderer, t, NULL, &r);
-    SDL_DestroyTexture(t);
-    SDL_FreeSurface(s);
+    if (score1_texture) {
+        r.w = score1_w; r.h = score1_h;
+        r.x = (int)(paddle1.rect.x * win_width) + win_width / 10;
+        r.y = win_height / 10;
+        SDL_RenderCopy(renderer, score1_texture, NULL, &r);
+    }
+
+    if (score[1] != cached_score2) {
+        cached_score2 = score[1];
+        snprintf(str, sizeof(str), "%d", score[1]);
+        update_cached_text(&score2_texture, &score2_w, &score2_h, score_font, str, score_color);
+    }
+
+    if (score2_texture) {
+        r.w = score2_w; r.h = score2_h;
+        r.x = (int)(paddle2.rect.x * win_width) - score2_w - win_width / 10;
+        r.y = win_height / 10;
+        SDL_RenderCopy(renderer, score2_texture, NULL, &r);
+    }
+}
+
+void
+draw_fps()
+{
+    if (!show_fps) return;
+
+    int fps_int = (int)(fps_smoothed + 0.5);
+    if (fps_int != cached_fps_display) {
+        cached_fps_display = fps_int;
+        char str[16];
+        snprintf(str, sizeof(str), "%d fps", fps_int);
+        update_cached_text(&fps_texture, &fps_w, &fps_h, rally_font, str, score_color);
+    }
+    if (fps_texture) {
+        SDL_Rect r = { 10, 10, fps_w, fps_h };
+        SDL_RenderCopy(renderer, fps_texture, NULL, &r);
+    }
 }
 
 void
@@ -385,15 +371,14 @@ draw_game()
     draw_paddle(&paddle2);
     draw_ball();
     draw_scoreboard();
+    draw_fps();
 }
 
 void
 handle_input(SDL_Window *w)
 {
     SDL_Event event;
-    bool pausing = false;
-
-    while (SDL_PollEvent(&event) || pausing) {
+    while (SDL_PollEvent(&event)) {
 //#define SHOWEVENT
 #ifdef SHOWEVENT // ld evname.o
         extern char *evname(SDL_Event *);
@@ -405,30 +390,13 @@ handle_input(SDL_Window *w)
             break;
         case SDL_KEYDOWN:
             switch (event.key.keysym.sym) {
-            case SDLK_w:
-                paddle1.velocity.y = -paddle_speed;
-                break;
-            case SDLK_s:
-                paddle1.velocity.y = paddle_speed;
-                break;
-            case SDLK_UP:
-                paddle2.velocity.y = -paddle_speed;
-                break;
-            case SDLK_DOWN:
-                paddle2.velocity.y = paddle_speed;
-                break;
-            case SDLK_m:
-                mute = !mute;
-                break;
-            case SDLK_SPACE:
-                if (pausing) {
-                    pause_time = SDL_GetTicks() - pause_time;
-                    pausing = false;
-                } else {
-                    pause_time = SDL_GetTicks();
-                    pausing = true;
-                }
-                break;
+            case SDLK_w:      paddle1.velocity.y = -paddle_speed; break;
+            case SDLK_s:      paddle1.velocity.y = paddle_speed;  break;
+            case SDLK_UP:     paddle2.velocity.y = -paddle_speed; break;
+            case SDLK_DOWN:   paddle2.velocity.y = paddle_speed;  break;
+            case SDLK_m:      mute = !mute; break;
+            case SDLK_g:      show_fps = !show_fps; break;
+            case SDLK_SPACE:  paused = !paused; break;
             case SDLK_f:
                 if (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN)
                     SDL_SetWindowFullscreen(w, 0);
@@ -436,56 +404,43 @@ handle_input(SDL_Window *w)
                     SDL_SetWindowFullscreen(w, SDL_WINDOW_FULLSCREEN_DESKTOP);
                 break;
             case SDLK_ESCAPE:
-                event.type = SDL_QUIT;
-                SDL_PushEvent(&event);
+                running = false;
                 break;
             }
             break;
         case SDL_KEYUP:
             switch (event.key.keysym.sym) {
             case SDLK_w:
-            case SDLK_s:
-                paddle1.velocity.y = 0;
-                break;
+            case SDLK_s:    paddle1.velocity.y = 0; break;
             case SDLK_UP:
-            case SDLK_DOWN:
-                paddle2.velocity.y = 0;
-                break;
+            case SDLK_DOWN: paddle2.velocity.y = 0; break;
             }
             break;
         case SDL_WINDOWEVENT:
-            switch (event.window.event) {
-            case SDL_WINDOWEVENT_RESIZED:
-                break;
-            case SDL_WINDOWEVENT_SIZE_CHANGED:
+            if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                 win_width = event.window.data1;
                 win_height = event.window.data2;
-                aspect = (float)win_width/(float)win_height;
-                break;
-            case SDL_WINDOWEVENT_EXPOSED:
-                break;
-            case SDL_WINDOWEVENT_CLOSE:
-                event.type = SDL_QUIT;
-                SDL_PushEvent(&event);
-                break;
+                aspect = (float)win_width / (float)win_height;
             }
             break;
         }
     }
 }
 
-void 
+void
 new_game()
 {
-    srand((unsigned) SDL_GetPerformanceCounter()); // current time in nanoseconds
+    srand((unsigned)SDL_GetPerformanceCounter()); // current time in nanoseconds
     score[0] = score[1] = 0;
-    new_paddle(&paddle1, 0.1);
-    new_paddle(&paddle2, 0.9-0.01);
+    cached_score1 = cached_score2 = -1;
+    new_paddle(&paddle1, 0.1f);
+    new_paddle(&paddle2, 0.9f - 0.01f);
     new_ball();
     running = true;
 }
 
-void game_update(float deltaTime)
+void
+game_update(float deltaTime)
 {
     update_paddle(&paddle1, deltaTime);
     update_paddle(&paddle2, deltaTime);
@@ -496,206 +451,194 @@ void game_update(float deltaTime)
     check_paddlewall_collision(&paddle2);
 }
 
-void 
+void
 run_game(SDL_Window *w)
 {
-    int start_time, prev_time = 0; // GetTicks will wrap if run > 49 days
-
+    Uint64 perf_freq = SDL_GetPerformanceFrequency();
+    Uint64 last_counter = SDL_GetPerformanceCounter();
+    double target_frame_time = 1.0 / (double)target_fps;
+    bool was_paused = false;
 
     while (running) {
-        pause_time = 0;
-        start_time = SDL_GetTicks();
+        Uint64 current_counter = SDL_GetPerformanceCounter();
+        double frame_time = (double)(current_counter - last_counter) / (double)perf_freq;
+        last_counter = current_counter;
+
+        if (frame_time > 0.0) { // smoothed actual fps, measured before the stall clamp below
+            double instant_fps = 1.0 / frame_time;
+            fps_smoothed = (fps_smoothed <= 0.0) ? instant_fps : fps_smoothed * 0.9 + instant_fps * 0.1;
+        }
+        if (frame_time > 0.05) frame_time = 0.05; // clamp stalls (resize/drag) so the ball can't tunnel
+
+        handle_input(w);
+
+        if (paused && !was_paused) {
+            pause_start_ticks = SDL_GetTicks64();
+        } else if (!paused && was_paused) {
+            // shift the rally clock forward by the whole pause so it doesn't jump on resume
+            rally_start_ticks += SDL_GetTicks64() - pause_start_ticks;
+        }
+        was_paused = paused;
+
+        if (!paused) {
+            game_update((float)frame_time);
+        }
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-
-        handle_input(w);
-        start_time += pause_time;
-        prev_time += pause_time;
-        rally_start += pause_time;
-        game_update((float)(start_time - prev_time) / 1000);
         draw_game();
-
         SDL_RenderPresent(renderer);
 
-        int delay_ms = (1000/fps) - (SDL_GetTicks() - start_time);
-        if (delay_ms > 0)
-            SDL_Delay(delay_ms);
-        else if (delay_ms < 0) 
-            printf("missed frame delay_ms %d (%dFPS = %.1fms)\n", delay_ms, fps, (float)1000/fps);
-
-        prev_time = start_time;
+        if (!vsync) {
+            // clamping frame rate using high-resolution counter
+            Uint64 frame_end_counter = SDL_GetPerformanceCounter();
+            double elapsed_time = (double)(frame_end_counter - current_counter) / (double)perf_freq;
+            if (elapsed_time < target_frame_time) {
+                Uint32 delay_ms = (Uint32)((target_frame_time - elapsed_time) * 1000.0);
+                if (delay_ms > 0) SDL_Delay(delay_ms);
+            }
+        }
     }
 
     printf("Final score %d/%d\n", score[0], score[1]);
     if (rally_duration > rally_max)
         rally_max = rally_duration;
     if (rally_max > 0)
-        printf("Best rally %d\n", rally_max/1000);
+        printf("Best rally %d\n", rally_max / 1000);
 }
-
-///////////
-// main //
-/////////
 
 typedef enum { ERROR, OK } result;
 
 result
 start()
 {
-    SDL_Init(SDL_INIT_EVERYTHING);
-    TTF_Init();
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return ERROR;
+    if (TTF_Init() < 0) return ERROR;
 
-    // fonts
 #ifdef EMBED
-    SDL_RWops *buf = SDL_RWFromMem(SatellaRegular_ZVVaz_ttf,
-            SatellaRegular_ZVVaz_ttf_len);
-    if ((score_font = TTF_OpenFontRW(buf, 0, fontsize)) == NULL)
-        return ERROR;
-
+    SDL_RWops *buf = SDL_RWFromMem(SatellaRegular_ZVVaz_ttf, SatellaRegular_ZVVaz_ttf_len);
+    score_font = TTF_OpenFontRW(buf, 0, fontsize);
     SDL_RWseek(buf, 0, RW_SEEK_SET);
-    if ((rally_font = TTF_OpenFontRW(buf, 1, fontsize/2)) == NULL)
-        return ERROR;
+    rally_font = TTF_OpenFontRW(buf, 1, fontsize / 2);
 #else
-    if ((score_font = TTF_OpenFont(fontpath, fontsize)) == NULL)
-        return ERROR;
-
-    if ((rally_font = TTF_OpenFont(fontpath, fontsize/2)) == NULL)
-        return ERROR;
+    score_font = TTF_OpenFont(fontpath, fontsize);
+    rally_font = TTF_OpenFont(fontpath, fontsize / 2);
 #endif
+    if (!score_font || !rally_font) return ERROR;
 
     // sound
     Mix_Init(MIX_INIT_OGG);
-    if (Mix_OpenAudio(MIX_DEFAULT_FREQUENCY, MIX_DEFAULT_FORMAT, 2/*stereo*/, 512) < 0)
-        return ERROR;
+    if (Mix_OpenAudio(MIX_DEFAULT_FREQUENCY, MIX_DEFAULT_FORMAT, 2, 512) < 0) return ERROR;
 
 #ifdef EMBED
     buf = SDL_RWFromMem(ping_pong_8bit_beeep_ogg, ping_pong_8bit_beeep_ogg_len);
-    if ((ballpaddle_sound = Mix_LoadWAV_RW(buf, 1)) == NULL)
-        return ERROR;
-
+    ballpaddle_sound = Mix_LoadWAV_RW(buf, 1);
     buf = SDL_RWFromMem(ping_pong_8bit_plop_ogg, ping_pong_8bit_plop_ogg_len);
-
-    if ((ballwall_sound = Mix_LoadWAV_RW(buf, 1)) == NULL)
-        return ERROR;
-
+    ballwall_sound = Mix_LoadWAV_RW(buf, 1);
     buf = SDL_RWFromMem(ping_pong_8bit_peeeeeep_ogg, ping_pong_8bit_peeeeeep_ogg_len);
-    if ((score_sound = Mix_LoadWAV_RW(buf, 1)) == NULL)
-        return ERROR;
+    score_sound = Mix_LoadWAV_RW(buf, 1);
 #else
-    if ((ballpaddle_sound = Mix_LoadWAV(ballpaddle_soundpath)) == NULL)
-        return ERROR;
-
-    if ((ballwall_sound = Mix_LoadWAV(ballwall_soundpath)) == NULL)
-        return ERROR;
-
-    if ((score_sound = Mix_LoadWAV(score_soundpath)) == NULL)
-        return ERROR;
+    ballpaddle_sound = Mix_LoadWAV(ballpaddle_soundpath);
+    ballwall_sound   = Mix_LoadWAV(ballwall_soundpath);
+    score_sound      = Mix_LoadWAV(score_soundpath);
 #endif
 
     // game window
-    SDL_Window *window;
-    if ((window = SDL_CreateWindow(win_title, 
-                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                win_width, win_height,
-                SDL_WINDOW_RESIZABLE)) == NULL)
-        return ERROR;
+    SDL_Window *window = SDL_CreateWindow(
+        win_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        win_width, win_height,
+        SDL_WINDOW_RESIZABLE | (start_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0)
+    );
+    if (!window) return ERROR;
 
-    if ((renderer = SDL_CreateRenderer(window, -1, 0)) == NULL)
-        return ERROR;
-  
-    // images to textures
-    SDL_Surface *paddle, *ball;
+    renderer = SDL_CreateRenderer(window, -1,
+        SDL_RENDERER_ACCELERATED | (vsync ? SDL_RENDERER_PRESENTVSYNC : 0));
+    if (!renderer) return ERROR;
+
+    SDL_Surface *paddle_s = NULL, *ball_s = NULL;
 #ifdef EMBED
     buf = SDL_RWFromMem(paddle_glow_red_png, paddle_glow_red_png_len);
-    if ((paddle = IMG_Load_RW(buf, 1)) == NULL)
-        return ERROR;
-
+    paddle_s = IMG_Load_RW(buf, 1);
     buf = SDL_RWFromMem(ball_glow_yellow_png, ball_glow_yellow_png_len);
-    if ((ball = IMG_Load_RW(buf, 1)) == NULL)
-        return ERROR;
+    ball_s = IMG_Load_RW(buf, 1);
 #else
-    if ((paddle = IMG_Load(paddle_glow_imgpath)) == NULL)
-        puts(SDL_GetError()); // report but don't stop
-
-    if ((ball = IMG_Load(ball_glow_imgpath)) == NULL)
-        puts(SDL_GetError());
+    paddle_s = IMG_Load(paddle_glow_imgpath);
+    ball_s   = IMG_Load(ball_glow_imgpath);
 #endif
-    paddle_glow_texture = SDL_CreateTextureFromSurface(renderer, paddle);
-    ball_glow_texture = SDL_CreateTextureFromSurface(renderer, ball);
-    SDL_FreeSurface(paddle);
-    SDL_FreeSurface(ball);
 
     // play
+    if (paddle_s) {
+        paddle_glow_texture = SDL_CreateTextureFromSurface(renderer, paddle_s);
+        SDL_FreeSurface(paddle_s);
+    }
+    if (ball_s) {
+        ball_glow_texture = SDL_CreateTextureFromSurface(renderer, ball_s);
+        SDL_FreeSurface(ball_s);
+    }
+
     new_game();
     run_game(window);
 
-#if defined(PROCINFO) && defined(unix)
-    char p[40];
-    sprintf(p, "cat /proc/%d/status >pid.%d", getpid(), getpid());
-    system(p); // report proc stats, e.g. VmHWM for max. RAM used
-#endif 
+    // cleanup resources
+    if (score1_texture) SDL_DestroyTexture(score1_texture);
+    if (score2_texture) SDL_DestroyTexture(score2_texture);
+    if (rally_texture)  SDL_DestroyTexture(rally_texture);
+    if (fps_texture)    SDL_DestroyTexture(fps_texture);
+    if (paddle_glow_texture) SDL_DestroyTexture(paddle_glow_texture);
+    if (ball_glow_texture)   SDL_DestroyTexture(ball_glow_texture);
+    if (ballpaddle_sound) Mix_FreeChunk(ballpaddle_sound);
+    if (ballwall_sound)   Mix_FreeChunk(ballwall_sound);
+    if (score_sound)      Mix_FreeChunk(score_sound);
+    if (score_font) TTF_CloseFont(score_font);
+    if (rally_font) TTF_CloseFont(rally_font);
 
-    SDL_DestroyTexture(paddle_glow_texture);
-    SDL_DestroyTexture(ball_glow_texture);
+    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    Mix_CloseAudio();
     Mix_Quit();
+    TTF_Quit();
+    SDL_Quit();
+
     return OK;
 }
 
-void // no return on error
+void
 options(int ac, char *av[])
 {
-    char *help = "pong [ options ] [ win_width win_height ]\n\
- -bN ball speed (float)\n\
- -pN paddle speed (float)\n\
- -fN frames per second (integer)";
-    int i;
+    int opt;
+    char *cmd = av[0];
 
-    // run-time options
-    for (i = 1; i < ac && av[i][0] == '-'; ++i) {
-        switch (av[i][1]) {
+    while ((opt = getopt(ac, av, "b:f:p:hF")) != -1) {
+        switch (opt) {
         case 'b':
-            if (isdigit(av[i][2]))
-                ball_speed_start = atof(av[i]+2);
-            else {
-                puts("-b requires number (ball speed)");
-                exit(1);
-            }
+            ball_speed_start = atof(optarg);
             break;
         case 'f':
-            if (isdigit(av[i][2]))
-                fps = atoi(av[i]+2);
-            else {
-                puts("-f requires number (frames per second)");
-                exit(1);
-            }
+            target_fps = atoi(optarg);
+            vsync = false; // turn off hardware pacing
             break;
         case 'p':
-            if (isdigit(av[i][2]))
-                paddle_speed = atof(av[i]+2);
-            else {
-                puts("-p requires number (paddle speed)");
-                exit(1);
-            }
+            paddle_speed = atof(optarg);
             break;
+        case 'F':
+            start_fullscreen = true;
+            break;
+        case 'h':
         default:
-            goto error;
+            printf("%s [ options ] [ win_width win_height ] # atari pong clone\n", cmd);
+            printf("-p  set initial paddle speed (-p 1.1 default)\n");
+            printf("-b  set initial ball speed 0-1.0 (-b 0.3 default)\n");
+            printf("-f  set fps and disable vsync (vsync on by default)\n");
+            printf("-F  start in full screen\n");
+            exit(1);
         }
     }
-    if (i < ac) {
-        if (i+2 == ac) {
-            win_width = atoi(av[i]);
-            win_height = atoi(av[i+1]);
-        } else 
-            goto error;
+
+    if (optind < ac) {
+        win_width = atoi(av[optind++]);
+        if (optind < ac)
+            win_height = atoi(av[optind]);
     }
-
-    return;
-
-error:
-    puts(help);
-    exit(1);
 }
 
 int
@@ -703,14 +646,16 @@ main(int ac, char *av[])
 {
     options(ac, av);
 
-    printf("ball speed=%.1f\n", ball_speed_start);
-    printf("paddle speed=%.1f\n", paddle_speed);
-    printf("fps=%d (%.1fms)\n", fps, (float) 1000/fps);
-    printf("win_width=%d, win_height=%d\n", win_width, win_height);
+    printf("ball speed=%.1f\npaddle speed=%.1f ", ball_speed_start, paddle_speed);
+    if (vsync)
+        printf("fps=vsync\n");
+    else
+        printf("fps=%d\n", target_fps);
 
     if (start() == ERROR) {
         printf("error: %s\n", SDL_GetError());
-        exit(1);
+        return 1;
     }
-    exit(0);
+
+    return 0;
 }

@@ -14,18 +14,20 @@ pong [ *options* ] [ *width height* ]
 
 ###### Options:
 
-**-b***float* &emsp; ball speed (0.3 is nice, 1.0 is too fast)\
+**-b***float* &emsp; ball speed (0.3 is ok, 1.0 is very fast)\
 **-p***float* &emsp; paddle speed (1.0 or thereabouts is ok)\
-**-f***int* &emsp; frames per second (see how far it can be pushed)
+**-f***int*   &emsp; frames per second (vsync is default)\
+**-F**      &emsp; start in full screen
 
 ###### Keyboard when running:
 
-**f** &emsp; toggle fullscreen/window\
-**space** &emsp; pause/unpause\
-**m** &emsp; mute/unmute\
-**s**/**w** &emsp; player 1 paddle\
-**↑**/**↓** &emsp; player 2 paddle\
-**esc** &emsp; quit
+**f**       &emsp; toggle fullscreen/window\
+**space**   &emsp; pause/unpause\
+**m**       &emsp; mute/unmute\
+**g**       &emsp; show/hide fps\
+**s**/**w**     &emsp; player 1 paddle\
+**↑**/**↓**     &emsp; player 2 paddle\
+**esc**     &emsp; quit
 
 ###### Requires
 

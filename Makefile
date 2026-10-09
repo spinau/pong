@@ -7,13 +7,15 @@ assets/sounds/ping_pong_8bit_peeeeeep.ogg \
 assets/sounds/ping_pong_8bit_beeep.ogg \
 assets/sounds/ping_pong_8bit_plop.ogg
 
+CFLAGS=-Wall -Wextra -O2
+
 all: pong epong
 
 pong: pong.c
-	$(CC) -o $@ $^ $(LIBS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
 
 epong: pong.c embed_assets.c
-	$(CC) -DEMBED -o $@ pong.c $(LIBS)
+	$(CC) -DEMBED -o $@ pong.c $(CFLAGS) $(LIBS)
 
 embed_assets.c: 
 	@for f in $(ASSETS) ; do echo //xxd -i $$f ;\
