@@ -56,3 +56,7 @@ pong [options] [width height]
 | `P`        | Pause / resume background music |
 | `G`        | Show / hide FPS                |
 | `Esc`      | Quit                          |
+
+---
+
+>Note: Music files in `assets/sounds` are believed to be freely redistributable.
