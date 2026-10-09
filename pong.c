@@ -11,6 +11,7 @@
 // f - toggle fullscreen/window
 // space - pause/unpause
 // m - mute/unmute
+// p - stop/start background music
 // s/w - player 1 paddle
 // ↑/↓ - player 2 paddle
 // esc - exit
@@ -44,10 +45,12 @@ int target_fps = 80;
 bool vsync = true; // -f opts out of vsync in favor of a manual fps cap
 bool mute = false;
 bool start_fullscreen = false;
+unsigned bg_music_volume = 48; // 0-128 (MIX_MAX_VOLUME)
 
 // assets
 #ifdef EMBED
 #include "embed_assets.c" // generated file; see Makefile
+const char *bg_music_path        = "<embedded audio>";
 #else
 const char *ballpaddle_soundpath = "assets/sounds/ping_pong_8bit_beeep.ogg";
 const char *ballwall_soundpath   = "assets/sounds/ping_pong_8bit_plop.ogg";
@@ -55,6 +58,7 @@ const char *score_soundpath      = "assets/sounds/ping_pong_8bit_peeeeeep.ogg";
 const char *fontpath             = "assets/fonts/SatellaRegular-ZVVaz.ttf";
 const char *paddle_glow_imgpath  = "assets/images/paddle-glow-red.png";
 const char *ball_glow_imgpath    = "assets/images/ball-glow-yellow.png";
+const char *bg_music_path        = "assets/sounds/bg_music.mp3";
 #endif
 const int fontsize = 64;
 
@@ -62,6 +66,7 @@ const int fontsize = 64;
 SDL_Color rally_color = {0, 128, 0, 255}; // rendered color for font
 SDL_Color score_color = {255, 255, 255, 255};
 Mix_Chunk *ballpaddle_sound = NULL, *ballwall_sound = NULL, *score_sound = NULL;
+Mix_Music *bg_music = NULL;
 TTF_Font *rally_font = NULL, *score_font = NULL;
 SDL_Renderer *renderer = NULL;
 SDL_Texture *paddle_glow_texture = NULL, *ball_glow_texture = NULL;
@@ -394,9 +399,20 @@ handle_input(SDL_Window *w)
             case SDLK_s:      paddle1.velocity.y = paddle_speed;  break;
             case SDLK_UP:     paddle2.velocity.y = -paddle_speed; break;
             case SDLK_DOWN:   paddle2.velocity.y = paddle_speed;  break;
-            case SDLK_m:      mute = !mute; break;
+            case SDLK_m:
+                mute = !mute;
+                Mix_VolumeMusic(mute ? 0 : bg_music_volume);
+                break;
             case SDLK_g:      show_fps = !show_fps; break;
             case SDLK_SPACE:  paused = !paused; break;
+            case SDLK_p:
+                if (Mix_PlayingMusic()) {
+                    if (Mix_PausedMusic()) Mix_ResumeMusic();
+                    else                   Mix_PauseMusic();
+                } else if (bg_music) {
+                    Mix_PlayMusic(bg_music, -1);
+                }
+                break;
             case SDLK_f:
                 if (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN)
                     SDL_SetWindowFullscreen(w, 0);
@@ -527,7 +543,7 @@ start()
     if (!score_font || !rally_font) return ERROR;
 
     // sound
-    Mix_Init(MIX_INIT_OGG);
+    Mix_Init(MIX_INIT_OGG | MIX_INIT_MP3);
     if (Mix_OpenAudio(MIX_DEFAULT_FREQUENCY, MIX_DEFAULT_FORMAT, 2, 512) < 0) return ERROR;
 
 #ifdef EMBED
@@ -542,6 +558,22 @@ start()
     ballwall_sound   = Mix_LoadWAV(ballwall_soundpath);
     score_sound      = Mix_LoadWAV(score_soundpath);
 #endif
+
+#ifdef EMBED
+    buf = SDL_RWFromMem(bg_music_mp3, bg_music_mp3_len);
+    bg_music = Mix_LoadMUS_RW(buf, 1);
+#else
+    bg_music = Mix_LoadMUS(bg_music_path);
+#endif
+    if (bg_music) {
+        Mix_VolumeMusic(mute ? 0 : bg_music_volume);
+        Mix_PlayMusic(bg_music, -1); // -1 loops indefinitely, seamlessly
+        printf("bg music: \"%s\" by %s (%s) %s\n",
+            Mix_GetMusicTitleTag(bg_music), Mix_GetMusicArtistTag(bg_music),
+            Mix_GetMusicAlbumTag(bg_music), Mix_GetMusicCopyrightTag(bg_music));
+    } else {
+        printf("warning: could not load background music '%s': %s\n", bg_music_path, Mix_GetError());
+    }
 
     // game window
     SDL_Window *window = SDL_CreateWindow(
@@ -589,6 +621,7 @@ start()
     if (ballpaddle_sound) Mix_FreeChunk(ballpaddle_sound);
     if (ballwall_sound)   Mix_FreeChunk(ballwall_sound);
     if (score_sound)      Mix_FreeChunk(score_sound);
+    if (bg_music)         Mix_FreeMusic(bg_music);
     if (score_font) TTF_CloseFont(score_font);
     if (rally_font) TTF_CloseFont(rally_font);
 
@@ -608,7 +641,7 @@ options(int ac, char *av[])
     int opt;
     char *cmd = av[0];
 
-    while ((opt = getopt(ac, av, "b:f:p:hF")) != -1) {
+    while ((opt = getopt(ac, av, "b:f:p:m:hv:F")) != -1) {
         switch (opt) {
         case 'b':
             ball_speed_start = atof(optarg);
@@ -620,8 +653,15 @@ options(int ac, char *av[])
         case 'p':
             paddle_speed = atof(optarg);
             break;
+        case 'm':
+            bg_music_path = optarg;
+            break;
         case 'F':
             start_fullscreen = true;
+            break;
+        case 'v':
+            bg_music_volume = atoi(optarg);
+            if (bg_music_volume > 128) bg_music_volume = 48;
             break;
         case 'h':
         default:
@@ -629,6 +669,8 @@ options(int ac, char *av[])
             printf("-p  set initial paddle speed (-p 1.1 default)\n");
             printf("-b  set initial ball speed 0-1.0 (-b 0.3 default)\n");
             printf("-f  set fps and disable vsync (vsync on by default)\n");
+            printf("-m  background music file (default: %s)\n", bg_music_path);
+            printf("-v  set music volume 0-128 (default: %u)\n", bg_music_volume);
             printf("-F  start in full screen\n");
             exit(1);
         }
@@ -646,7 +688,7 @@ main(int ac, char *av[])
 {
     options(ac, av);
 
-    printf("ball speed=%.1f\npaddle speed=%.1f ", ball_speed_start, paddle_speed);
+    printf("ball speed=%.1f\npaddle speed=%.1f\n", ball_speed_start, paddle_speed);
     if (vsync)
         printf("fps=vsync\n");
     else

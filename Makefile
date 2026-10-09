@@ -5,7 +5,10 @@ assets/images/ball-glow-yellow.png \
 assets/images/paddle-glow-red.png \
 assets/sounds/ping_pong_8bit_peeeeeep.ogg \
 assets/sounds/ping_pong_8bit_beeep.ogg \
-assets/sounds/ping_pong_8bit_plop.ogg
+assets/sounds/ping_pong_8bit_plop.ogg \
+assets/sounds/bg_music.mp3
+
+# ln desired mp3 file to assets/sounds/bg_music.mp3
 
 CFLAGS=-Wall -Wextra -O2
 
